@@ -3,31 +3,30 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class CameraRender
+public partial class CameraRender
 {
     private ScriptableRenderContext _context;
     private Camera _camera;
     private const string BUFFER_NAME = "Render Camera";
+#if UNITY_EDITOR
+    string SampleName { get; set; }
+#else
+    const string SampleName = BUFFER_NAME;
+#endif
+
+    
     private static ShaderTagId _unlitShaderTagId = new ShaderTagId("SRPDefaultUnlit");
 
-    private static ShaderTagId[] _legacyShaderTagIds =
-    {
-        new ShaderTagId("Always"),
-        new ShaderTagId("ForwardBase"),
-        new ShaderTagId("PrepassBase"),
-        new ShaderTagId("Vertex"),
-        new ShaderTagId("VertexLMRGBM"),
-        new ShaderTagId("VertexLM"),
-    };
-
-    private Material errorMaterial;
-    
-    private CommandBuffer _buffer = new CommandBuffer() {name = "Render Camera"};
+    private CommandBuffer _buffer = new CommandBuffer() {name = BUFFER_NAME};
     private CullingResults _cullingResults;
     public void Render(ScriptableRenderContext context, Camera camera)
     {
         _context = context;
         _camera = camera;
+        //设置命令缓冲区的名字
+        PrepareBuffer();
+
+        PrepareForSceneWindow();
 
         if (!Cull())
         {
@@ -39,32 +38,10 @@ public class CameraRender
         DrawVisibleGeometry();
         //绘制SRP不支持的着色器类型
         DrawUnSupportedShaders();
+        //绘制Gizmos
+        DrawGizmos();
         Submit();
     }
-
-    /// <summary>
-    /// 绘制SRP不支持的着色器类型
-    /// </summary>
-    private void DrawUnSupportedShaders()
-    {
-        if (!errorMaterial)
-        {
-            errorMaterial = new Material(Shader.Find("Hidden/InternalErrorShader"));
-        }
-        var drawingSettings = new DrawingSettings(_legacyShaderTagIds[0], new SortingSettings(_camera))
-        {
-            overrideMaterial = errorMaterial
-        };
-        for (int i = 1; i < _legacyShaderTagIds.Length; i++)
-        {
-            drawingSettings.SetShaderPassName(i,_legacyShaderTagIds[i]);
-        }
-
-        var filteringSettings = FilteringSettings.defaultValue;
-
-        _context.DrawRenderers(_cullingResults, ref drawingSettings, ref filteringSettings);
-    }
-
 
     /// <summary>
     /// 设置相机属性和矩阵
@@ -72,9 +49,16 @@ public class CameraRender
     private void Setup()
     {
         _context.SetupCameraProperties(_camera);
-        //清空上一帧的FrameBuffer
-        _buffer.ClearRenderTarget(true, true, Color.clear);
-        _buffer.BeginSample(BUFFER_NAME);
+        //得到相机的clear flags
+        CameraClearFlags flags = _camera.clearFlags;
+        //设置相机清除状态
+        _buffer.ClearRenderTarget(
+            flags <= CameraClearFlags.Depth, 
+            flags == CameraClearFlags.Color,
+            flags == CameraClearFlags.Color ? _camera.backgroundColor.linear : Color.clear);
+        ////清空上一帧的FrameBuffer
+        //_buffer.ClearRenderTarget(true, true, Color.clear);
+        _buffer.BeginSample(SampleName);
         ExcuteBuffer();
     }
 
@@ -89,7 +73,8 @@ public class CameraRender
     /// </summary>
     private void Submit()
     {
-        _buffer.EndSample(BUFFER_NAME);
+        _buffer.EndSample(SampleName);
+        ExcuteBuffer();
         _context.Submit();
     }
 
@@ -122,6 +107,15 @@ public class CameraRender
         //3.绘制透明物体
         _context.DrawRenderers(_cullingResults, ref drawingSettings, ref filteringSettings);
     }
+
+    partial void DrawUnSupportedShaders();
+    partial void DrawGizmos();
+    /// <summary>
+    /// 在Game视图绘制的几何体也绘制到Scene视图中
+    /// </summary>
+    partial void PrepareForSceneWindow();
+    partial void PrepareBuffer();
+
 
     private bool Cull()
     {
